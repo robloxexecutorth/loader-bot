@@ -6,7 +6,6 @@ import aiohttp
 from dotenv import load_dotenv
 from keep_alive import keep_alive
 
-# โหลดค่า Token
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
@@ -17,7 +16,6 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # Sync คำสั่ง Slash Command
         await self.tree.sync()
         print(f"Synced slash commands for {self.user}")
 
@@ -43,7 +41,6 @@ async def search(interaction: discord.Interaction, query: str):
                 
                 if scripts:
                     s = scripts[0]
-                    
                     title = s.get('title', 'No Title')
                     game_name = s.get('game', {}).get('name', 'Unknown Game')
                     game_img = s.get('game', {}).get('imageUrl', '')
@@ -56,10 +53,9 @@ async def search(interaction: discord.Interaction, query: str):
                     embed = discord.Embed(
                         title=title,
                         description=f"**Game:** {game_name}\n**Status:** {is_verified} | {has_key}",
-                        color=discord.Color.green() if s.get('verified') else discord.Color.blue()
+                        color=discord.Color.blue()
                     )
 
-                    # จัดการเรื่องรูปภาพ
                     if script_img:
                         img_url = script_img if script_img.startswith('http') else f"https://scriptblox.com{script_img}"
                         embed.set_image(url=img_url)
@@ -69,8 +65,18 @@ async def search(interaction: discord.Interaction, query: str):
                         embed.set_thumbnail(url=thumb_url)
 
                     embed.add_field(name="Views", value=f"👁️ {views:,}", inline=True)
-                    embed.add_field(name="Type", value=s.get('scriptType', 'Unknown'), inline=True)
                     
-                    # ส่วนที่เคย Error (แก้ไขแล้ว)
-                    if len(script_code) > 800:
-                        clean_code = f"
+                    # แก้ไขส่วนที่ Error โดยใช้ตัวแปรแยกออกมาให้ชัดเจน
+                    short_code = script_code[:800] + "..." if len(script_code) > 800 else script_code
+                    clean_code = f"```lua\n{short_code}\n```"
+                    
+                    embed.add_field(name="Script Content", value=clean_code, inline=False)
+                    embed.set_footer(text=f"RETH OFFICIAL | ID: {s.get('_id')}")
+
+                    await interaction.followup.send(embed=embed)
+                else:
+                    await interaction.followup.send(f"🔍 ไม่พบสคริปต์สำหรับ: **{query}**")
+            else:
+                await interaction.followup.send("⚠️ เกิดข้อผิดพลาดในการเชื่อมต่อ API")
+
+bot.run(TOKEN)
