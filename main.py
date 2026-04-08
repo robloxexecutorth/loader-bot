@@ -160,7 +160,7 @@ async def setup(interaction: discord.Interaction):
     )
     # Adding Link Button to Setup Message too
     view = GetScriptView()
-    view.add_item(ui.Button(label="View Web", url="https://yourwebsite.com", style=discord.ButtonStyle.link))
+    view.add_item(ui.Button(label="View Web", url="https://robloxexecutorth.github.io/SCRETH/", style=discord.ButtonStyle.link))
     
     await interaction.response.send_message("System installed successfully!", ephemeral=True)
     await interaction.channel.send(embed=embed, view=view)
