@@ -11,10 +11,13 @@ from keep_alive import keep_alive
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
-# --- 1. ระบบจัดการหน้าสคริปต์ (Pagination View) ---
+# Channel ID storage for the chat-to-search feature
+setup_channels = set()
+
+# --- 1. Pagination System (Next/Back) ---
 class ScriptPaginator(ui.View):
     def __init__(self, scripts, query):
-        super().__init__(timeout=300) # View หมดอายุใน 5 นาที (สอดคล้องกับการลบข้อความ)
+        super().__init__(timeout=300)
         self.scripts = scripts
         self.query = query
         self.current_page = 0
@@ -24,14 +27,12 @@ class ScriptPaginator(ui.View):
         title = s.get('title', 'No Title')
         game_name = s.get('game', {}).get('name', 'Unknown Game')
         
-        # ข้อมูลสถานะต่างๆ
+        # Stats & Status
         verified = "✅ Yes" if s.get('verified') else "❌ No"
         has_key = "🔑 Required" if s.get('key') else "🆓 No Key"
         views = s.get('views', 0)
         likes = s.get('likeCount', 0)
         dislikes = s.get('dislikeCount', 0)
-        
-        # จัดการเรื่องเวลา
         created = s.get('createdAt', '')[:10]
         updated = s.get('updatedAt', '')[:10]
 
@@ -41,7 +42,6 @@ class ScriptPaginator(ui.View):
             color=discord.Color.blue()
         )
 
-        # ข้อมูลสถิติและสถานะ
         status_text = (
             f"**Verified:** {verified}\n"
             f"**Key:** {has_key}\n"
@@ -51,12 +51,12 @@ class ScriptPaginator(ui.View):
         )
         embed.add_field(name="📊 Status & Stats", value=status_text, inline=False)
 
-        # โค้ดสคริปต์
+        # Script Content
         script_code = s.get('script', 'No script found')
         short_code = script_code[:800] + "..." if len(script_code) > 800 else script_code
         embed.add_field(name="📜 Script Content", value=f"```lua\n{short_code}\n```", inline=False)
 
-        # รูปภาพประกอบ
+        # Images Handling
         script_img = s.get('image', '')
         if script_img:
             img_url = script_img if script_img.startswith('http') else f"https://scriptblox.com{script_img}"
@@ -76,7 +76,7 @@ class ScriptPaginator(ui.View):
             self.current_page -= 1
             await interaction.response.edit_message(embed=await self.create_embed(), view=self)
         else:
-            await interaction.response.send_message("นี่คือหน้าแรกแล้วครับ", ephemeral=True)
+            await interaction.response.send_message("This is the first page.", ephemeral=True)
 
     @ui.button(label='Next', style=discord.ButtonStyle.gray, emoji='➡️')
     async def next_button(self, interaction: discord.Interaction, button: ui.Button):
@@ -84,41 +84,52 @@ class ScriptPaginator(ui.View):
             self.current_page += 1
             await interaction.response.edit_message(embed=await self.create_embed(), view=self)
         else:
-            await interaction.response.send_message("ไม่มีหน้าถัดไปแล้วครับ", ephemeral=True)
+            await interaction.response.send_message("No more pages available.", ephemeral=True)
 
-# --- 2. หน้าต่างกรอกชื่อ (Modal) ---
-class ScriptSearchModal(ui.Modal, title='RETH OFFICIAL - Get Script'):
-    map_name = ui.TextInput(label='ชื่อแมพหรือชื่อสคริปต์', placeholder='ระบุชื่อที่ต้องการหา...', min_length=2)
+# --- 2. Core Search Logic ---
+async def search_script_logic(query, channel_or_interaction):
+    url = f"https://scriptblox.com/api/script/search?q={query}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status == 200:
+                data = await response.json()
+                scripts = data.get('result', {}).get('scripts', [])
+                
+                if scripts:
+                    view = ScriptPaginator(scripts, query)
+                    embed = await view.create_embed()
+                    
+                    if isinstance(channel_or_interaction, discord.Interaction):
+                        msg = await channel_or_interaction.followup.send(embed=embed, view=view)
+                    else:
+                        msg = await channel_or_interaction.send(embed=embed, view=view)
+                    
+                    # Auto-delete after 5 minutes (300 seconds)
+                    await asyncio.sleep(300)
+                    try:
+                        await msg.delete()
+                    except:
+                        pass
+                else:
+                    target = channel_or_interaction.followup if isinstance(channel_or_interaction, discord.Interaction) else channel_or_interaction
+                    await target.send(f"🔍 No scripts found for: **{query}**", delete_after=10)
+            else:
+                target = channel_or_interaction.followup if isinstance(channel_or_interaction, discord.Interaction) else channel_or_interaction
+                await target.send("⚠️ API Error. Please try again later.", delete_after=10)
+
+# --- 3. UI Components ---
+class ScriptSearchModal(ui.Modal, title='RETH OFFICIAL - Search Script'):
+    map_name = ui.TextInput(
+        label='Game Name / Script Name',
+        placeholder='Enter keywords here...',
+        min_length=2,
+        required=True
+    )
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False) # เปลี่ยนเป็น False เพื่อให้ระบบลบข้อความทำงานได้
-        query = self.map_name.value
-        url = f"https://scriptblox.com/api/script/search?q={query}" # ดึงมาทั้งหมดเพื่อทำ Next Page
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    scripts = data.get('result', {}).get('scripts', [])
-                    
-                    if scripts:
-                        view = ScriptPaginator(scripts, query)
-                        embed = await view.create_embed()
-                        # ส่งข้อความผลการค้นหา
-                        msg = await interaction.followup.send(embed=embed, view=view)
-                        
-                        # --- ระบบ Auto-Delete 5 นาที (300 วินาที) ---
-                        await asyncio.sleep(300)
-                        try:
-                            await msg.delete()
-                        except:
-                            pass # ถ้าข้อความถูกลบไปก่อนแล้วไม่ต้องทำอะไร
-                    else:
-                        await interaction.followup.send(f"❌ ไม่พบสคริปต์สำหรับ: {query}", delete_after=10)
-                else:
-                    await interaction.followup.send("⚠️ API มีปัญหา", delete_after=10)
+        await interaction.response.defer(ephemeral=False)
+        await search_script_logic(self.map_name.value, interaction)
 
-# --- 3. ปุ่มกด Setup ---
 class GetScriptView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -127,7 +138,7 @@ class GetScriptView(ui.View):
     async def get_script(self, interaction: discord.Interaction, button: ui.Button):
         await interaction.response.send_modal(ScriptSearchModal())
 
-# --- 4. ตัวบอทหลัก ---
+# --- 4. Main Bot Class ---
 class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -137,23 +148,48 @@ class MyBot(commands.Bot):
     async def setup_hook(self):
         self.add_view(GetScriptView())
         await self.tree.sync()
+        print(f"Synced slash commands for {self.user}")
 
 bot = MyBot()
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user}')
+    print(f'Bot is ready: {bot.user}')
     keep_alive()
 
-@bot.tree.command(name="setup", description="ติดตั้งระบบค้นหาสคริปต์")
+@bot.event
+async def on_message(message):
+    if message.author == bot.user:
+        return
+    
+    # Check if message is in a setup channel
+    if message.channel.id in setup_channels:
+        # Delete user message to keep channel clean
+        try:
+            await message.delete()
+        except:
+            pass
+        # Perform search based on chat input
+        await search_script_logic(message.content, message.channel)
+    
+    await bot.process_commands(message)
+
+# --- 5. Commands ---
+@bot.tree.command(name="setup", description="Initialize the script search system in this channel")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup(interaction: discord.Interaction):
+    setup_channels.add(interaction.channel.id)
     embed = discord.Embed(
         title="🛡️ RETH OFFICIAL LOADER",
-        description="คลิกปุ่มด้านล่างเพื่อค้นหาสคริปต์\n(ข้อความผลลัพธ์จะถูกลบอัตโนมัติใน 5 นาที)",
-        color=discord.Color.blue()
+        description=(
+            "**The system is now active!**\n\n"
+            "• Click the **Get Script** button below\n"
+            "• OR **Type the game name** directly in this channel\n\n"
+            "*Results will be auto-deleted after 5 minutes.*"
+        ),
+        color=discord.Color.green()
     )
-    await interaction.response.send_message("ติดตั้งระบบเรียบร้อย!", ephemeral=True)
+    await interaction.response.send_message("System installed successfully!", ephemeral=True)
     await interaction.channel.send(embed=embed, view=GetScriptView())
 
 bot.run(TOKEN)
