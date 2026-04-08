@@ -52,11 +52,11 @@ class ScriptSearchModal(ui.Modal, title='RETH OFFICIAL - Get Script'):
 # --- 2. ปุ่มกด (View) ---
 class GetScriptView(ui.View):
     def __init__(self):
-        super().__init__(timeout=None) # ปุ่มไม่หมดอายุ
+        super().__init__(timeout=None)
 
+    # แก้ไขตรงนี้: เพิ่มพารามิเตอร์ button เข้าไป
     @ui.button(label='Get Script', style=discord.ButtonStyle.primary, custom_id='get_script_btn', emoji='🔍')
-    async def get_script(self, interaction: discord.Interaction):
-        # ส่ง Modal ทันทีที่กดปุ่ม
+    async def get_script(self, interaction: discord.Interaction, button: ui.Button):
         await interaction.response.send_modal(ScriptSearchModal())
 
 # --- 3. ตัวบอทหลัก ---
@@ -67,7 +67,6 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # สำคัญ: ต้องใส่ GetScriptView() ตรงนี้เพื่อให้ปุ่มเก่าๆ ยังใช้งานได้
         self.add_view(GetScriptView())
         await self.tree.sync()
         print(f"Synced slash commands for {self.user}")
