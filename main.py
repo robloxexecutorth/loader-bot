@@ -93,7 +93,7 @@ async def search_script_logic(query, channel_or_interaction):
                 if scripts:
                     view = ScriptPaginator(scripts, query)
                     # ADDING VIEW WEB BUTTON (Edit URL below)
-                    view.add_item(ui.Button(label="View Web", url="https://yourwebsite.com", style=discord.ButtonStyle.link))
+                    view.add_item(ui.Button(label="View Web", url="https://robloxexecutorth.github.io/SCRETH/", style=discord.ButtonStyle.link))
                     
                     embed = await view.create_embed()
                     
