@@ -3,26 +3,97 @@ from discord import app_commands, ui
 from discord.ext import commands
 import os
 import aiohttp
+import asyncio
+from datetime import datetime
 from dotenv import load_dotenv
 from keep_alive import keep_alive
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
-# --- 1. หน้าต่างกรอกชื่อ (Modal) ---
+# --- 1. ระบบจัดการหน้าสคริปต์ (Pagination View) ---
+class ScriptPaginator(ui.View):
+    def __init__(self, scripts, query):
+        super().__init__(timeout=300) # View หมดอายุใน 5 นาที (สอดคล้องกับการลบข้อความ)
+        self.scripts = scripts
+        self.query = query
+        self.current_page = 0
+
+    async def create_embed(self):
+        s = self.scripts[self.current_page]
+        title = s.get('title', 'No Title')
+        game_name = s.get('game', {}).get('name', 'Unknown Game')
+        
+        # ข้อมูลสถานะต่างๆ
+        verified = "✅ Yes" if s.get('verified') else "❌ No"
+        has_key = "🔑 Required" if s.get('key') else "🆓 No Key"
+        views = s.get('views', 0)
+        likes = s.get('likeCount', 0)
+        dislikes = s.get('dislikeCount', 0)
+        
+        # จัดการเรื่องเวลา
+        created = s.get('createdAt', '')[:10]
+        updated = s.get('updatedAt', '')[:10]
+
+        embed = discord.Embed(
+            title=title,
+            description=f"**Game:** {game_name}",
+            color=discord.Color.blue()
+        )
+
+        # ข้อมูลสถิติและสถานะ
+        status_text = (
+            f"**Verified:** {verified}\n"
+            f"**Key:** {has_key}\n"
+            f"**Views:** {views:,}\n"
+            f"**👍 Likes:** {likes:,} | **👎 Dislikes:** {dislikes:,}\n"
+            f"**📅 Created:** {created} | **🔄 Updated:** {updated}"
+        )
+        embed.add_field(name="📊 Status & Stats", value=status_text, inline=False)
+
+        # โค้ดสคริปต์
+        script_code = s.get('script', 'No script found')
+        short_code = script_code[:800] + "..." if len(script_code) > 800 else script_code
+        embed.add_field(name="📜 Script Content", value=f"```lua\n{short_code}\n```", inline=False)
+
+        # รูปภาพประกอบ
+        script_img = s.get('image', '')
+        if script_img:
+            img_url = script_img if script_img.startswith('http') else f"https://scriptblox.com{script_img}"
+            embed.set_image(url=img_url)
+
+        game_img = s.get('game', {}).get('imageUrl', '')
+        if game_img:
+            thumb_url = game_img if game_img.startswith('http') else f"https://scriptblox.com{game_img}"
+            embed.set_thumbnail(url=thumb_url)
+
+        embed.set_footer(text=f"Page {self.current_page + 1}/{len(self.scripts)} | RETH OFFICIAL")
+        return embed
+
+    @ui.button(label='Back', style=discord.ButtonStyle.gray, emoji='⬅️')
+    async def back_button(self, interaction: discord.Interaction, button: ui.Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            await interaction.response.edit_message(embed=await self.create_embed(), view=self)
+        else:
+            await interaction.response.send_message("นี่คือหน้าแรกแล้วครับ", ephemeral=True)
+
+    @ui.button(label='Next', style=discord.ButtonStyle.gray, emoji='➡️')
+    async def next_button(self, interaction: discord.Interaction, button: ui.Button):
+        if self.current_page < len(self.scripts) - 1:
+            self.current_page += 1
+            await interaction.response.edit_message(embed=await self.create_embed(), view=self)
+        else:
+            await interaction.response.send_message("ไม่มีหน้าถัดไปแล้วครับ", ephemeral=True)
+
+# --- 2. หน้าต่างกรอกชื่อ (Modal) ---
 class ScriptSearchModal(ui.Modal, title='RETH OFFICIAL - Get Script'):
-    map_name = ui.TextInput(
-        label='ชื่อแมพหรือชื่อสคริปต์ที่ต้องการ',
-        placeholder='เช่น Blox Fruits, King Legacy...',
-        min_length=2,
-        max_length=50,
-        required=True
-    )
+    map_name = ui.TextInput(label='ชื่อแมพหรือชื่อสคริปต์', placeholder='ระบุชื่อที่ต้องการหา...', min_length=2)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False) # เปลี่ยนเป็น False เพื่อให้ระบบลบข้อความทำงานได้
         query = self.map_name.value
-        url = f"https://scriptblox.com/api/script/search?q={query}&max=1"
+        url = f"https://scriptblox.com/api/script/search?q={query}" # ดึงมาทั้งหมดเพื่อทำ Next Page
         
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
@@ -31,35 +102,32 @@ class ScriptSearchModal(ui.Modal, title='RETH OFFICIAL - Get Script'):
                     scripts = data.get('result', {}).get('scripts', [])
                     
                     if scripts:
-                        s = scripts[0]
-                        title = s.get('title', 'No Title')
-                        game_name = s.get('game', {}).get('name', 'Unknown Game')
-                        script_code = s.get('script', 'No script found')
+                        view = ScriptPaginator(scripts, query)
+                        embed = await view.create_embed()
+                        # ส่งข้อความผลการค้นหา
+                        msg = await interaction.followup.send(embed=embed, view=view)
                         
-                        embed = discord.Embed(title=f"🚀 พบสคริปต์: {title}", color=discord.Color.green())
-                        embed.add_field(name="Game", value=game_name, inline=True)
-                        
-                        short_code = script_code[:800] + "..." if len(script_code) > 800 else script_code
-                        embed.add_field(name="Script Content", value=f"```lua\n{short_code}\n```", inline=False)
-                        embed.set_footer(text="RETH OFFICIAL")
-                        
-                        await interaction.followup.send(embed=embed, ephemeral=True)
+                        # --- ระบบ Auto-Delete 5 นาที (300 วินาที) ---
+                        await asyncio.sleep(300)
+                        try:
+                            await msg.delete()
+                        except:
+                            pass # ถ้าข้อความถูกลบไปก่อนแล้วไม่ต้องทำอะไร
                     else:
-                        await interaction.followup.send(f"❌ ไม่พบสคริปต์สำหรับ: {query}", ephemeral=True)
+                        await interaction.followup.send(f"❌ ไม่พบสคริปต์สำหรับ: {query}", delete_after=10)
                 else:
-                    await interaction.followup.send("⚠️ API มีปัญหา กรุณาลองใหม่", ephemeral=True)
+                    await interaction.followup.send("⚠️ API มีปัญหา", delete_after=10)
 
-# --- 2. ปุ่มกด (View) ---
+# --- 3. ปุ่มกด Setup ---
 class GetScriptView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    # แก้ไขตรงนี้: เพิ่มพารามิเตอร์ button เข้าไป
     @ui.button(label='Get Script', style=discord.ButtonStyle.primary, custom_id='get_script_btn', emoji='🔍')
     async def get_script(self, interaction: discord.Interaction, button: ui.Button):
         await interaction.response.send_modal(ScriptSearchModal())
 
-# --- 3. ตัวบอทหลัก ---
+# --- 4. ตัวบอทหลัก ---
 class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -69,7 +137,6 @@ class MyBot(commands.Bot):
     async def setup_hook(self):
         self.add_view(GetScriptView())
         await self.tree.sync()
-        print(f"Synced slash commands for {self.user}")
 
 bot = MyBot()
 
@@ -78,12 +145,12 @@ async def on_ready():
     print(f'Logged in as {bot.user}')
     keep_alive()
 
-@bot.tree.command(name="setup", description="ติดตั้งปุ่มค้นหาสคริปต์")
+@bot.tree.command(name="setup", description="ติดตั้งระบบค้นหาสคริปต์")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🛡️ RETH OFFICIAL LOADER",
-        description="ยินดีต้อนรับสู่ระบบค้นหาสคริปต์\nคลิกปุ่มด้านล่างเพื่อเริ่มใช้งาน",
+        description="คลิกปุ่มด้านล่างเพื่อค้นหาสคริปต์\n(ข้อความผลลัพธ์จะถูกลบอัตโนมัติใน 5 นาที)",
         color=discord.Color.blue()
     )
     await interaction.response.send_message("ติดตั้งระบบเรียบร้อย!", ephemeral=True)
