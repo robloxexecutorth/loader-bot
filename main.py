@@ -9,7 +9,8 @@ from keep_alive import keep_alive
 
 # --- [1] การตั้งค่า ---
 load_dotenv()
-TOKEN = os.getenv('DISCORD_TOKEN')
+TOKEN = os.getenv('MTQ0OTA5MTkwMjQwOTI4MTU0Ng.GwoCFw.o2vbeKERr_OJ71wwe6Wyv4JejOtZpg8UdGG5a0
+')
 WEB_LINK = "https://yourwebsite.com" 
 
 setup_channels = set()
