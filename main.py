@@ -5,17 +5,18 @@ import os
 import aiohttp
 import asyncio
 from dotenv import load_dotenv
-from keep_alive import keep_alive
+from keep_alive import keep_alive # ไฟล์สำหรับรัน 24 ชม.
 
-# --- [1] CONFIGURATION ---
+# --- [1] การตั้งค่าพื้นฐาน ---
 load_dotenv()
-# ตรวจสอบชื่อตัวแปรใน .env ให้ตรงกัน (DISCORD_TOKEN)
+# ดึง Token จากตัวแปร DISCORD_TOKEN ในไฟล์ .env ของคุณ
 TOKEN = os.getenv('DISCORD_TOKEN') 
 WEB_LINK = "https://yourwebsite.com" 
 
+# เก็บรายชื่อห้องที่ตั้งค่าระบบไว้
 setup_channels = set()
 
-# --- [2] PAGINATOR SYSTEM ---
+# --- [2] ระบบแสดงผลสคริปต์ (Paginator) ---
 class ScriptPaginator(ui.View):
     def __init__(self, scripts, query):
         super().__init__(timeout=300)
@@ -67,7 +68,7 @@ class ScriptPaginator(ui.View):
             self.current_page += 1
             await interaction.response.edit_message(embed=await self.create_embed(), view=self)
 
-# --- [3] LOGIC & MODAL ---
+# --- [3] ตรรกะการค้นหาและ Modal ---
 async def search_logic(query, target):
     url = f"https://scriptblox.com/api/script/search?q={query}"
     async with aiohttp.ClientSession() as session:
@@ -78,24 +79,25 @@ async def search_logic(query, target):
                 if scripts:
                     view = ScriptPaginator(scripts, query)
                     embed = await view.create_embed()
-                    # ตรวจสอบว่าเป็น Interaction หรือ Message
+                    # ตรวจสอบว่าเป็น Interaction หรือข้อความแชทปกติ
                     if isinstance(target, discord.Interaction):
                         msg = await target.followup.send(embed=embed, view=view)
                     else:
                         msg = await target.send(embed=embed, view=view)
                     
+                    # ลบข้อความอัตโนมัติหลังจาก 5 นาที
                     await asyncio.sleep(300)
                     try: await msg.delete()
                     except: pass
                 else:
-                    msg = "❌ No scripts found."
+                    msg = "❌ ไม่พบสคริปต์ที่คุณค้นหา"
                     if isinstance(target, discord.Interaction): await target.followup.send(msg)
                     else: await target.send(msg, delete_after=10)
 
 class ScriptSearchModal(ui.Modal, title='RETH OFFICIAL - Search'):
-    map_name = ui.TextInput(label='Game Name', placeholder='Enter here...', min_length=2)
+    map_name = ui.TextInput(label='Game Name', placeholder='พิมพ์ชื่อเกมที่นี่...', min_length=2)
     async def on_submit(self, interaction: discord.Interaction):
-        # แก้ปัญหาค้างโดยใช้ defer
+        # แก้ปัญหาบอทไม่ตอบสนอง
         await interaction.response.defer()
         await search_logic(self.map_name.value, interaction)
 
@@ -106,10 +108,9 @@ class GetScriptView(ui.View):
     
     @ui.button(label='Get Script', style=discord.ButtonStyle.primary, custom_id='gs_btn', emoji='🔍')
     async def get_script(self, interaction: discord.Interaction, button: ui.Button):
-        # Modal ไม่ต้องใช้ defer() เพราะมันเป็นการเปิดหน้าต่างใหม่
         await interaction.response.send_modal(ScriptSearchModal())
 
-# --- [4] BOT CORE ---
+# --- [4] โครงสร้างหลักของบอท ---
 class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -117,63 +118,65 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
+        # ทำให้ปุ่มยังคงอยู่แม้บอทจะรีสตาร์ท
         self.add_view(GetScriptView())
-        await self.tree.sync() # Sync คำสั่ง Slash Command
+        # ซิงค์คำสั่ง Slash Command ทั้งหมด
+        await self.tree.sync()
 
 bot = MyBot()
 
 @bot.event
 async def on_ready():
-    print(f'✅ Online: {bot.user}')
+    print(f'✅ บอทออนไลน์แล้ว: {bot.user}')
 
 @bot.event
 async def on_message(message):
     if message.author == bot.user: return
-    # ตรวจสอบว่าห้องนี้ตั้งค่าระบบไว้หรือไม่
+    # ตรวจสอบว่าห้องแชทนี้ถูกตั้งค่าไว้หรือไม่
     if message.channel.id not in setup_channels: return
     
+    # ลบคำสั่งที่พิมพ์ในช่องแชทออกทันทีเพื่อให้ห้องสะอาด
     try: await message.delete()
     except: pass
     await search_logic(message.content, message.channel)
 
-# --- [5] COMMANDS (FIXED) ---
+# --- [5] คำสั่งสแลช (แก้ปัญหา Permissions & Timeout) ---
 
-@bot.tree.command(name="setup")
-# นำเช็คสิทธิ์ออกชั่วคราวเพื่อแก้ Error MissingPermissions
+@bot.tree.command(name="setup", description="เปิดใช้งานระบบในห้องนี้")
 async def setup(interaction: discord.Interaction):
-    # ป้องกันแอปไม่ตอบสนอง
+    # แก้ปัญหา Application did not respond
     await interaction.response.defer(ephemeral=True)
     
     setup_channels.add(interaction.channel.id)
     embed = discord.Embed(
         title="🛡️ RETH OFFICIAL LOADER", 
-        description="System Active!\n• Use button or type game name.", 
+        description="ระบบพร้อมใช้งานแล้ว!\n• กดปุ่มด้านล่างเพื่อค้นหา\n• หรือพิมพ์ชื่อเกมลงในช่องแชทนี้ได้เลย", 
         color=discord.Color.green()
     )
     embed.set_footer(text="Powered by ScriptBlox")
     
-    # ใช้ followup เพราะเราใช้ defer ไปแล้ว
-    await interaction.followup.send("Setup Done!")
+    await interaction.followup.send("ตั้งค่าห้องแชทสำเร็จ!", ephemeral=True)
     await interaction.channel.send(embed=embed, view=GetScriptView())
 
-@bot.tree.command(name="unset")
+@bot.tree.command(name="unset", description="ปิดใช้งานระบบในห้องนี้")
 async def unset(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     if interaction.channel.id in setup_channels:
         setup_channels.remove(interaction.channel.id)
-        await interaction.followup.send("❌ System Disabled for this channel.")
+        await interaction.followup.send("❌ ปิดการใช้งานระบบสำหรับห้องนี้เรียบร้อย")
     else:
-        await interaction.followup.send("Not set up here.")
+        await interaction.followup.send("ห้องนี้ยังไม่ได้ถูกตั้งค่าระบบครับ")
 
-@bot.tree.command(name="getscript")
+@bot.tree.command(name="getscript", description="ค้นหาสคริปต์แบบด่วน")
 async def getscript(interaction: discord.Interaction, query: str):
     await interaction.response.defer()
     await search_logic(query, interaction)
 
-# --- [6] RUN ---
+# --- [6] การเริ่มทำงานของบอท ---
 if __name__ == "__main__":
-    keep_alive() # เรียกใช้เพื่อให้บอทออนไลน์ 24 ชม. บน Render
+    # รันระบบ Keep Alive ก่อนเริ่มรันบอท
+    keep_alive() 
     if TOKEN:
         bot.run(TOKEN)
     else:
-        print("❌ ERROR: DISCORD_TOKEN not found in .env")
+        print("❌ เกิดข้อผิดพลาด: ไม่พบตัวแปร DISCORD_TOKEN ในไฟล์ .env")
