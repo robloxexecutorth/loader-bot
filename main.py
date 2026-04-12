@@ -1,138 +1,125 @@
 import discord
-from discord import app_commands, ui
+from discord import app_commands
 from discord.ext import commands
-import os
 import aiohttp
-import asyncio
+import os
 from dotenv import load_dotenv
-from keep_alive import keep_alive
+from keep_alive import keep_alive  # นำเข้าฟังก์ชันจาก keep_alive.py
 
-# --- [1] การตั้งค่า ---
+# โหลดค่า Token จากไฟล์ .env
 load_dotenv()
-TOKEN = os.getenv('MTQ0OTA5MTkwMjQwOTI4MTU0Ng.GwoCFw.o2vbeKERr_OJ71wwe6Wyv4JejOtZpg8UdGG5a0
-')
-WEB_LINK = "https://yourwebsite.com" 
+TOKEN = os.getenv('DISCORD_TOKEN')
 
-setup_channels = set()
-
-# --- [2] ระบบเลื่อนหน้า (Paginator) ---
-class ScriptPaginator(ui.View):
-    def __init__(self, scripts, query):
-        super().__init__(timeout=300)
-        self.scripts = scripts
-        self.query = query
-        self.current_page = 0
-        self.add_item(ui.Button(label="View Web", url=WEB_LINK, style=discord.ButtonStyle.link))
-
-    async def create_embed(self):
-        s = self.scripts[self.current_page]
-        title = s.get('title', 'No Title')
-        game_name = s.get('game', {}).get('name', 'Unknown Game')
-        
-        embed = discord.Embed(title=title, description=f"**Game:** {game_name}", color=discord.Color.blue())
-        stats = (f"**Verified:** {'✅ Yes' if s.get('verified') else '❌ No'}\n"
-                 f"**Key:** {'🔑 Required' if s.get('key') else '🆓 No Key'}\n"
-                 f"**Views:** {s.get('views', 0):,}\n"
-                 f"**👍 Likes:** {s.get('likeCount', 0):,} | **👎 Dislikes:** {s.get('dislikeCount', 0):,}")
-        embed.add_field(name="📊 Status & Stats", value=stats, inline=False)
-
-        script_code = s.get('script', 'No script found')
-        short_code = script_code[:800] + "..." if len(script_code) > 800 else script_code
-        embed.add_field(name="📜 Script Content", value=f"```lua\n{short_code}\n```", inline=False)
-
-        img = s.get('image', '')
-        if img: embed.set_image(url=img if img.startswith('http') else f"https://scriptblox.com{img}")
-        embed.set_footer(text=f"Page {self.current_page + 1}/{len(self.scripts)} | RETH OFFICIAL")
-        return embed
-
-    @ui.button(label='Back', style=discord.ButtonStyle.gray, emoji='⬅️')
-    async def back_button(self, interaction: discord.Interaction, button: ui.Button):
-        if self.current_page > 0:
-            self.current_page -= 1
-            await interaction.response.edit_message(embed=await self.create_embed(), view=self)
-
-    @ui.button(label='Next', style=discord.ButtonStyle.gray, emoji='➡️')
-    async def next_button(self, interaction: discord.Interaction, button: ui.Button):
-        if self.current_page < len(self.scripts) - 1:
-            self.current_page += 1
-            await interaction.response.edit_message(embed=await self.create_embed(), view=self)
-
-# --- [3] ระบบค้นหา ---
-async def search_logic(query, target):
-    url = f"https://scriptblox.com/api/script/search?q={query}"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status == 200:
-                data = await response.json()
-                scripts = data.get('result', {}).get('scripts', [])
-                if scripts:
-                    view = ScriptPaginator(scripts, query)
-                    embed = await view.create_embed()
-                    # ตรวจสอบว่าเป็น Interaction หรือ Message
-                    if isinstance(target, discord.Interaction):
-                        msg = await target.followup.send(embed=embed, view=view)
-                    else:
-                        msg = await target.send(embed=embed, view=view)
-                    
-                    await asyncio.sleep(300)
-                    try: await msg.delete()
-                    except: pass
-                else:
-                    msg = "❌ No scripts found."
-                    if isinstance(target, discord.Interaction): await target.followup.send(msg)
-                    else: await target.send(msg, delete_after=10)
-
-class ScriptSearchModal(ui.Modal, title='RETH OFFICIAL - Search'):
-    map_name = ui.TextInput(label='Game Name', placeholder='Enter here...', min_length=2)
-    async def on_submit(self, interaction: discord.Interaction):
-        # แก้ Did not respond โดยการ Defer ก่อน [image_503067.jpg]
-        await interaction.response.defer()
-        await search_logic(self.map_name.value, interaction)
-
-class GetScriptView(ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(ui.Button(label="View Web", url=WEB_LINK, style=discord.ButtonStyle.link))
-    @ui.button(label='Get Script', style=discord.ButtonStyle.primary, custom_id='gs_btn', emoji='🔍')
-    async def get_script(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_modal(ScriptSearchModal())
-
-# --- [4] โครงสร้างบอท ---
 class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
-        intents.message_content = True
+        # อนุญาตให้บอทอ่านข้อความ (ถ้าจำเป็น)
+        intents.message_content = True 
         super().__init__(command_prefix="!", intents=intents)
+        self.setup_channels = {} # เก็บ ID ห้องที่เลือกไว้
 
     async def setup_hook(self):
-        self.add_view(GetScriptView())
+        # Sync slash commands กับ Discord
         await self.tree.sync()
+        print(f"✅ บอท {self.user} พร้อมทำงานและซิงค์คำสั่งแล้ว!")
 
 bot = MyBot()
 
-@bot.event
-async def on_ready():
-    print(f'✅ Online: {bot.user}')
+# --- UI ส่วน Modal สำหรับกรอกชื่อเกม ---
+class ScriptModal(discord.ui.Modal, title="ค้นหาสคริปต์จาก ScriptBlox"):
+    game_input = discord.ui.TextInput(
+        label="ชื่อเกมที่ต้องการ",
+        placeholder="เช่น Blox Fruits, King Legacy...",
+        min_length=2
+    )
 
-@bot.event
-async def on_message(message):
-    if message.author == bot.user or message.channel.id not in setup_channels: return
-    try: await message.delete()
-    except: pass
-    await search_logic(message.content, message.channel)
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)
+        search_query = self.game_input.value
+        url = f"https://scriptblox.com/api/script/search?q={search_query}"
 
-# --- [5] คำสั่งแก้ไข Error ---
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    scripts = data.get("result", {}).get("scripts", [])
+                    
+                    if not scripts:
+                        return await interaction.followup.send(f"❌ ไม่พบสคริปต์สำหรับเกม: **{search_query}**")
 
-@bot.tree.command(name="setup")
+                    # ดึงสคริปต์ 3 ตัวแรกมาแสดง (เพื่อไม่ให้ Embed ยาวเกินไป)
+                    for script in scripts[:3]:
+                        embed = discord.Embed(
+                            title=script.get("title", "ไม่มีชื่อ"),
+                            url=f"https://scriptblox.com/script/{script.get('slug')}",
+                            color=discord.Color.blue()
+                        )
+                        
+                        # ข้อมูลจาก JSON
+                        game_data = script.get("game", {})
+                        is_verified = "✅ ใช่" if script.get("verified") else "❌ ไม่"
+                        has_key = "🔑 ต้องใช้ Key" if script.get("key") else "🔓 ไม่ใช้ Key"
+                        is_patched = "⚠️ ใช้งานไม่ได้ (Patched)" if script.get("isPatched") else "✅ ใช้งานได้"
+                        
+                        embed.add_field(name="ชื่อเกม", value=game_data.get("name", "ไม่ระบุ"), inline=True)
+                        embed.add_field(name="ประเภท", value=script.get("scriptType", "N/A"), inline=True)
+                        embed.add_field(name="ยอดเข้าชม", value=f"{script.get('views', 0):,}", inline=True)
+                        embed.add_field(name="สถานะ", value=f"Verified: {is_verified}\nStatus: {is_patched}", inline=True)
+                        embed.add_field(name="ระบบ Key", value=has_key, inline=True)
+                        embed.add_field(name="Universal", value="ใช่" if script.get("isUniversal") else "ไม่ใช่", inline=True)
+                        
+                        # ส่วนของเนื้อหาสคริปต์
+                        content = script.get("script", "")
+                        if len(content) > 1000:
+                            content = content[:997] + "..."
+                        embed.add_field(name="Script (ย่อ)", value=f"```lua\n{content}\n```", inline=False)
+                        
+                        # รูปภาพประกอบ
+                        img = script.get("image")
+                        if img:
+                            full_img_url = f"https://scriptblox.com{img}" if img.startswith("/") else img
+                            embed.set_image(url=full_img_url)
+
+                        embed.set_footer(text=f"อัปเดตเมื่อ: {script.get('updatedAt')[:10]}")
+                        await interaction.followup.send(embed=embed)
+                else:
+                    await interaction.followup.send("⚠️ ติดต่อ API ไม่สำเร็จ กรุณาลองใหม่ภายหลัง")
+
+# --- UI ส่วนปุ่มกดหน้าแรก ---
+class MainView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None) # ปุ่มอยู่ถาวร
+
+    @discord.ui.button(label="Get Script", style=discord.ButtonStyle.primary, emoji="🔥")
+    async def get_script(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # ตรวจสอบว่าใช้งานถูกห้องไหม
+        target_channel_id = bot.setup_channels.get(interaction.guild_id)
+        if target_channel_id and interaction.channel_id != target_channel_id:
+            return await interaction.response.send_message(f"❌ กรุณาใช้ในห้องที่ตั้งค่าไว้เท่านั้น!", ephemeral=True)
+        
+        await interaction.response.send_modal(ScriptModal())
+
+# --- Slash Command ---
+@bot.tree.command(name="setup", description="ตั้งค่าห้องสำหรับรันระบบบอทสคริปต์")
+@app_commands.checks.has_permissions(administrator=True)
 async def setup(interaction: discord.Interaction):
-    # นำสิทธิ์แอดมินออกชั่วคราวเพื่อแก้ MissingPermissions [image_503848.jpg]
-    await interaction.response.defer(ephemeral=True)
-    setup_channels.add(interaction.channel.id)
-    embed = discord.Embed(title="🛡️ RETH OFFICIAL LOADER", description="System Active!", color=discord.Color.green())
-    await interaction.followup.send("Setup Done!", ephemeral=True)
-    await interaction.channel.send(embed=embed, view=GetScriptView())
+    bot.setup_channels[interaction.guild_id] = interaction.channel_id
+    
+    embed = discord.Embed(
+        title="🌟 ScriptBlox Bot System",
+        description="ยินดีต้อนรับสู่ระบบค้นหาสคริปต์! กดปุ่มด้านล่างเพื่อเริ่มค้นหา",
+        color=discord.Color.green()
+    )
+    embed.set_footer(text="ระบบตั้งค่าให้ใช้งานเฉพาะห้องนี้แล้ว")
+    
+    await interaction.response.send_message("✅ ตั้งค่าสำเร็จ!", ephemeral=True)
+    await interaction.channel.send(embed=embed, view=MainView())
 
-if __name__ == "__main__":
-    keep_alive() # ใช้คู่กับ keep_alive.py
-    if TOKEN:
-        bot.run(TOKEN)
+# รันระบบ Keep Alive (สำหรับ Replit/Uptime)
+keep_alive()
+
+# เริ่มการทำงานของบอท
+if TOKEN:
+    bot.run(TOKEN)
+else:
+    print("❌ ไม่พบ DISCORD_TOKEN ในไฟล์ .env หรือระบบ Secrets")
